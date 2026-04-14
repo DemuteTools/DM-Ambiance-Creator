@@ -1,5 +1,5 @@
 --[[
-@version 1.8
+@version 1.9
 @noindex
 DM Ambiance Creator - Export UI Module
 Handles the Export modal window rendering with multi-selection and new widgets.
@@ -14,6 +14,7 @@ v1.7: Story 4.4 - Added "(auto: uses container intervals)" indicator when loopIn
       single override, and batch override sections.
 v1.8: Story 5.2 - Added Multichannel Export Mode selector (Flatten/Preserve) in global, override,
       and batch sections. Hidden for stereo-only containers (AC #10).
+v1.9: Added Export Config History dropdown with auto-recall and ExtState persistence.
 --]]
 
 local Export_UI = {}
@@ -25,6 +26,8 @@ local Export_Engine = nil
 local shouldOpenModal = false
 local lastClickedKey = nil  -- For Shift+Click range selection
 local lastExportResults = nil  -- Store structured export results for display (Story 4.3)
+local ConfigHistory = nil
+local selectedConfigIndex = 0  -- 0 = most recent (auto), maps to ComboBox index
 
 -- Module-level constants (avoid duplication)
 local LOOP_MODE_OPTIONS = "Auto\0On\0Off\0"
@@ -44,9 +47,10 @@ function Export_UI.initModule(g)
     globals = g
 end
 
-function Export_UI.setDependencies(settings, engine)
+function Export_UI.setDependencies(settings, engine, configHistory)
     Export_Settings = settings
     Export_Engine = engine
+    ConfigHistory = configHistory
 end
 
 -- Open the export modal
@@ -56,6 +60,16 @@ function Export_UI.openModal()
     Export_Settings.initializeEnabledContainers()
     lastClickedKey = nil
     lastExportResults = nil  -- Clear any previous results (Story 4.3)
+
+    -- Auto-recall most recent config
+    if ConfigHistory then
+        local latestConfig = ConfigHistory.getLatestConfig()
+        if latestConfig then
+            Export_Settings.applyConfig(latestConfig)
+            selectedConfigIndex = 0
+        end
+    end
+
     shouldOpenModal = true
 end
 
@@ -142,6 +156,35 @@ function Export_UI.renderModal()
 
         -- Right Panel: Parameters
         if imgui.BeginChild(ctx, "Parameters", rightPanelWidth, contentHeight, imgui.ChildFlags_Border) then
+            -- Export Config History Dropdown
+            if ConfigHistory and ConfigHistory.getConfigCount() > 0 then
+                imgui.TextColored(ctx, 0xFFAA00FF, "Export Config")
+                imgui.SameLine(ctx, 120)
+                imgui.PushItemWidth(ctx, rightPanelWidth - 130)
+
+                local configs = ConfigHistory.getConfigList()
+                local comboItems = {}
+                for _, cfg in ipairs(configs) do
+                    table.insert(comboItems, cfg.presetName .. " | " .. cfg.timestamp)
+                end
+                local comboStr = table.concat(comboItems, "\0") .. "\0"
+
+                local changedConfig, newConfigIdx = imgui.Combo(ctx, "##ExportConfigHistory",
+                    selectedConfigIndex, comboStr)
+                if changedConfig then
+                    selectedConfigIndex = newConfigIdx
+                    local config = ConfigHistory.getConfig(newConfigIdx + 1)  -- 1-based
+                    if config then
+                        Export_Settings.applyConfig(config)
+                    end
+                end
+
+                imgui.PopItemWidth(ctx)
+                imgui.Spacing(ctx)
+                imgui.Separator(ctx)
+                imgui.Spacing(ctx)
+            end
+
             -- Global Parameters Section
             imgui.TextColored(ctx, 0xFFAA00FF, "Global Export Parameters")
             imgui.Separator(ctx)
@@ -675,6 +718,10 @@ function Export_UI.renderModal()
         if imgui.Button(ctx, "Export", buttonWidth, 30) then
             local success, message, exportResults = Export_Engine.performExport()
             lastExportResults = exportResults
+            -- Reset config dropdown to latest (new config was just saved at index 0)
+            if success then
+                selectedConfigIndex = 0
+            end
             -- Only close on full success (no errors or warnings)
             if success and exportResults and exportResults.totalErrors == 0 and exportResults.totalWarnings == 0 then
                 imgui.CloseCurrentPopup(ctx)

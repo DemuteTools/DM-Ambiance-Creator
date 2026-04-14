@@ -1,5 +1,5 @@
 --[[
-@version 1.4
+@version 1.5
 @noindex
 DM Ambiance Creator - Export Settings Module
 Handles export settings state management, container collection, and parameter resolution.
@@ -7,6 +7,7 @@ Migrated from Export_Core.lua with new v2 fields (maxPoolItems, loopMode).
 v1.1: Code review fix - validateMaxPoolItems now uses containerInfo for proper pool size (items × areas).
 v1.2: Story 3.1 - Added loopDuration and loopInterval parameters for loop mode configuration.
 v1.3: Story 5.2 - Added multichannelExportMode parameter (flatten/preserve) with validation.
+v1.5: Added applyConfig() for restoring saved export configurations from history.
 v1.4 (2026-02-07): Bug fix - resolveLoopMode() now activates loop mode for negative triggerRate
       regardless of intervalMode. Previous bug: only ABSOLUTE mode triggered loop auto-detection,
       causing RELATIVE/COVERAGE/CHUNK containers with negative intervals to ignore overlap.
@@ -278,6 +279,46 @@ function M.getEffectiveParams(containerKey)
         return override.params
     end
     return exportSettings.globalParams
+end
+
+-- Apply a saved config to current export settings
+-- Restores globalParams, containerOverrides, and enabledContainers
+-- Handles missing/extra container keys gracefully
+function M.applyConfig(config)
+    if not config then return end
+
+    -- Apply globalParams (validate each through setGlobalParam)
+    if config.globalParams then
+        for param, value in pairs(config.globalParams) do
+            M.setGlobalParam(param, value)
+        end
+    end
+
+    -- Apply containerOverrides (deep copy to prevent mutation of history entries)
+    if config.containerOverrides then
+        exportSettings.containerOverrides = {}
+        for key, override in pairs(config.containerOverrides) do
+            local copiedOverride = {
+                enabled = override.enabled,
+                params = {}
+            }
+            if override.params then
+                for k, v in pairs(override.params) do
+                    copiedOverride.params[k] = v
+                end
+            end
+            exportSettings.containerOverrides[key] = copiedOverride
+        end
+    end
+
+    -- Apply enabledContainers (graceful: unknown keys ignored, new containers stay enabled)
+    if config.enabledContainers then
+        for key, enabled in pairs(config.enabledContainers) do
+            if exportSettings.enabledContainers[key] ~= nil then
+                exportSettings.enabledContainers[key] = enabled
+            end
+        end
+    end
 end
 
 -- Count enabled containers

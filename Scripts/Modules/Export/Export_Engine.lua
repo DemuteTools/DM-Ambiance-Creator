@@ -1,5 +1,5 @@
 --[[
-@version 1.17
+@version 1.18
 @noindex
 DM Ambiance Creator - Export Engine Module
 Handles export orchestration, region creation, and export execution.
@@ -24,6 +24,7 @@ v1.15: Code review fixes - Log warning when ValidatePtr fails, log all warnings 
        remove redundant success check condition.
 v1.16 (2026-02-07): Story 5.3 - Capture effectiveInterval from placeContainerItems() and pass to Loop.processLoop()
        for consistent overlap after split/swap in seamless loops.
+v1.18: Added config history save on successful export (Export_ConfigHistory integration).
 v1.17 (2026-02-08): Story 5.6 Code Review v2 R2 - Skip processLoop() when multi-channel sync applied
        Captures syncApplied flag from placeContainerItems() 4th return value.
        When multi-channel preserve loop sync has already trimmed items to bounds,
@@ -35,6 +36,7 @@ local globals = {}
 local Settings = nil
 local Placement = nil
 local Loop = nil
+local ConfigHistory = nil
 
 function M.initModule(g)
     if not g then
@@ -43,10 +45,11 @@ function M.initModule(g)
     globals = g
 end
 
-function M.setDependencies(settings, placement, loop)
+function M.setDependencies(settings, placement, loop, configHistory)
     Settings = settings
     Placement = placement
     Loop = loop
+    ConfigHistory = configHistory
 end
 
 -- Find the index of the last child track within a folder
@@ -562,6 +565,34 @@ function M.performExport()
     -- Return success if at least one container succeeded
     -- Note: totalSuccess already includes containers with warnings (see addExportResult)
     local overallSuccess = exportResults.totalSuccess > 0
+
+    -- Save export config to history after successful export
+    if overallSuccess and ConfigHistory then
+        local savedGlobal = {}
+        for k, v in pairs(globalParams) do savedGlobal[k] = v end
+
+        local savedOverrides = {}
+        for _, containerInfo in ipairs(enabledContainers) do
+            local override = Settings.getContainerOverride(containerInfo.key)
+            if override and override.enabled then
+                savedOverrides[containerInfo.key] = {
+                    enabled = true,
+                    params = {}
+                }
+                for k, v in pairs(override.params) do
+                    savedOverrides[containerInfo.key].params[k] = v
+                end
+            end
+        end
+
+        local savedEnabled = {}
+        for _, containerInfo in ipairs(containers) do
+            savedEnabled[containerInfo.key] = Settings.isContainerEnabled(containerInfo.key)
+        end
+
+        ConfigHistory.saveConfig(savedGlobal, savedOverrides, savedEnabled)
+    end
+
     return overallSuccess, message, exportResults
 end
 
