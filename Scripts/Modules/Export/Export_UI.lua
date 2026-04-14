@@ -1,5 +1,5 @@
 --[[
-@version 1.9
+@version 1.10
 @noindex
 DM Ambiance Creator - Export UI Module
 Handles the Export modal window rendering with multi-selection and new widgets.
@@ -15,6 +15,8 @@ v1.7: Story 4.4 - Added "(auto: uses container intervals)" indicator when loopIn
 v1.8: Story 5.2 - Added Multichannel Export Mode selector (Flatten/Preserve) in global, override,
       and batch sections. Hidden for stereo-only containers (AC #10).
 v1.9: Added Export Config History dropdown with auto-recall and ExtState persistence.
+v1.10: Bug fix - Preview table columns now specify explicit sizing policy (WidthFixed/WidthStretch)
+       to fix ImGui assertion when init_width > 0 without sizing flag.
 --]]
 
 local Export_UI = {}
@@ -536,70 +538,73 @@ function Export_UI.renderModal()
             imgui.TextColored(ctx, 0x00AAFFFF, "Preview")
             imgui.Spacing(ctx)
 
-            if imgui.BeginChild(ctx, "PreviewList", -1, 120, imgui.ChildFlags_Border) then
+            local previewHeight = math.max(select(2, imgui.GetContentRegionAvail(ctx)), 80)
+            local tableFlags = imgui.TableFlags_Resizable
+                + imgui.TableFlags_BordersInnerV + imgui.TableFlags_BordersOuterH
+                + imgui.TableFlags_BordersOuterV + imgui.TableFlags_ScrollY
+                + imgui.TableFlags_RowBg
+            if imgui.BeginTable(ctx, "PreviewTable", 5, tableFlags, -1, previewHeight) then
+                imgui.TableSetupScrollFreeze(ctx, 0, 1)
+                imgui.TableSetupColumn(ctx, "Container", imgui.TableColumnFlags_NoHide + imgui.TableColumnFlags_WidthStretch, 150)
+                imgui.TableSetupColumn(ctx, "Pool", imgui.TableColumnFlags_WidthFixed, 50)
+                imgui.TableSetupColumn(ctx, "Loop", imgui.TableColumnFlags_WidthFixed, 110)
+                imgui.TableSetupColumn(ctx, "Tracks", imgui.TableColumnFlags_WidthFixed, 45)
+                imgui.TableSetupColumn(ctx, "Duration", imgui.TableColumnFlags_WidthFixed, 55)
+                imgui.TableHeadersRow(ctx)
+
                 -- Defensive nil-check for Export_Engine
                 local previewEntries = Export_Engine and Export_Engine.generatePreview
                     and Export_Engine.generatePreview() or {}
 
                 if #previewEntries == 0 then
+                    imgui.TableNextRow(ctx)
+                    imgui.TableSetColumnIndex(ctx, 0)
                     imgui.TextDisabled(ctx, "No enabled containers")
                 else
                     for _, entry in ipairs(previewEntries) do
-                        -- Defensive nil checks for entry fields
                         if not entry or not entry.name then
+                            imgui.TableNextRow(ctx)
+                            imgui.TableSetColumnIndex(ctx, 0)
                             imgui.TextDisabled(ctx, "(invalid entry)")
                         else
-                            -- Format pool display: "6/12" or "8/8"
-                            local poolSelected = entry.poolSelected or 0
-                            local poolTotal = entry.poolTotal or 0
-                            local poolDisplay = string.format("%d/%d", poolSelected, poolTotal)
+                            imgui.TableNextRow(ctx)
 
-                            -- Format loop indicator: checkmark or X, with "(auto)" suffix and duration
-                            local loopIndicator
+                            -- Container name (full, table handles clipping)
+                            imgui.TableSetColumnIndex(ctx, 0)
+                            imgui.Text(ctx, entry.name)
+
+                            -- Pool: "6/12"
+                            imgui.TableSetColumnIndex(ctx, 1)
+                            imgui.TextDisabled(ctx, string.format("%d/%d",
+                                entry.poolSelected or 0, entry.poolTotal or 0))
+
+                            -- Loop indicator
+                            imgui.TableSetColumnIndex(ctx, 2)
                             if entry.loopMode then
-                                loopIndicator = "Loop \226\156\147"  -- ✓
+                                local loopText = "\226\156\147"  -- ✓
                                 if entry.loopModeAuto then
-                                    loopIndicator = loopIndicator .. " (auto)"
+                                    loopText = loopText .. " (auto)"
                                 end
-                                -- Add loop duration if available
                                 if entry.loopDuration then
-                                    loopIndicator = loopIndicator .. " " .. entry.loopDuration .. "s"
+                                    loopText = loopText .. " " .. entry.loopDuration .. "s"
                                 end
+                                imgui.TextColored(ctx, 0x88FF88FF, loopText)
                             else
-                                loopIndicator = "Loop \226\156\151"  -- ✗
+                                imgui.TextDisabled(ctx, "\226\156\151")  -- ✗
                             end
 
-                            -- Format track info: "1trk" for mono, "2trk" for stereo
-                            local trackCount = entry.trackCount or 1
-                            local trackInfo = string.format("%dtrk", trackCount)
+                            -- Track count
+                            imgui.TableSetColumnIndex(ctx, 3)
+                            imgui.TextDisabled(ctx, string.format("%dtrk", entry.trackCount or 1))
 
-                            -- Format duration: "~12s" rounded to nearest second
-                            local estimatedDuration = entry.estimatedDuration or 0
-                            local durationDisplay = string.format("~%ds", math.floor(estimatedDuration + 0.5))
-
-                            -- Render row with proper spacing
-                            -- Name (truncated if needed)
-                            local displayName = entry.name
-                            if #displayName > 20 then
-                                displayName = displayName:sub(1, 17) .. "..."
-                            end
-                            imgui.Text(ctx, displayName)
-                            imgui.SameLine(ctx, 160)
-                            imgui.TextDisabled(ctx, poolDisplay)
-                            imgui.SameLine(ctx, 200)
-                            if entry.loopMode then
-                                imgui.TextColored(ctx, 0x88FF88FF, loopIndicator)
-                            else
-                                imgui.TextDisabled(ctx, loopIndicator)
-                            end
-                            imgui.SameLine(ctx, 300)
-                            imgui.TextDisabled(ctx, trackInfo)
-                            imgui.SameLine(ctx, 340)
-                            imgui.TextDisabled(ctx, durationDisplay)
+                            -- Duration
+                            imgui.TableSetColumnIndex(ctx, 4)
+                            local dur = entry.estimatedDuration or 0
+                            imgui.TextDisabled(ctx, string.format("~%ds", math.floor(dur + 0.5)))
                         end
                     end
                 end
-                imgui.EndChild(ctx)  -- PreviewList - inside if block
+                imgui.EndTable(ctx)
             end
 
             -- Story 4.3: Export Results Section (shows after export with errors/warnings)

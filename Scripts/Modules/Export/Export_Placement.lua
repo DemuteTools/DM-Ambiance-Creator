@@ -1,5 +1,5 @@
 --[[
-@version 1.19
+@version 1.20
 @noindex
 DM Ambiance Creator - Export Placement Module
 Handles track resolution, item placement helpers, and export track management.
@@ -83,6 +83,10 @@ v1.19 (2026-02-08): Story 5.5 - Fix export interval inheritance for Round-Robin/
        - FIX: Added inheritance resolution matching Structures.getEffectiveContainerParams()
          Now uses group.triggerRate/intervalMode when container doesn't override
        - Added documentation comment on placeItemsStandardMode explaining shared position design
+v1.20: Bug fix - resolvePool() now reads item.areas (source of truth) first, falls back to
+       globals.waveformAreas (UI cache). Previously only checked globals.waveformAreas which is
+       ephemeral and only populated when the user views the waveform in the UI, causing export
+       to ignore areas and use the full item instead.
 --]]
 
 local M = {}
@@ -366,7 +370,12 @@ function M.resolvePool(containerInfo, maxPoolItems)
     -- Iterate all items in container
     for itemIdx, item in ipairs(containerInfo.container.items or {}) do
         local itemKey = M.makeItemKey(containerInfo.path, containerInfo.containerIndex, itemIdx)
-        local areas = globals.waveformAreas and globals.waveformAreas[itemKey]
+
+        -- Use item.areas (source of truth) first, fall back to globals.waveformAreas (UI cache)
+        local areas = item.areas
+        if not areas or #areas == 0 then
+            areas = globals.waveformAreas and globals.waveformAreas[itemKey]
+        end
 
         if areas and #areas > 0 then
             -- Create entry for each waveform area
