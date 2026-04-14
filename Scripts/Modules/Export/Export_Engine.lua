@@ -1,5 +1,5 @@
 --[[
-@version 1.18
+@version 1.19
 @noindex
 DM Ambiance Creator - Export Engine Module
 Handles export orchestration, region creation, and export execution.
@@ -29,6 +29,9 @@ v1.17 (2026-02-08): Story 5.6 Code Review v2 R2 - Skip processLoop() when multi-
        Captures syncApplied flag from placeContainerItems() 4th return value.
        When multi-channel preserve loop sync has already trimmed items to bounds,
        processLoop() would do a destructive second split/swap, inflating the region.
+v1.19: Bug fix - Region creation now uses global createRegions setting instead of per-container params.
+       Fixes bug where containers with overrides (typically loop containers) had createRegions=false
+       frozen from override creation time, preventing region creation even when enabled globally.
 --]]
 
 local M = {}
@@ -345,7 +348,12 @@ local function processContainerExport(containerInfo, params, currentExportPositi
     end
 
     -- Create region for this container if enabled
-    if params.createRegions and #placedItems > 0 then
+    -- Always use GLOBAL createRegions setting (not per-container override)
+    -- because region creation is a project-level concern.
+    -- Fix: overrides created before enabling createRegions globally would have
+    -- createRegions=false frozen from creation time, preventing region creation.
+    local globalParams = Settings.getGlobalParams()
+    if globalParams.createRegions and #placedItems > 0 then
         local regionStartPos = nil
         local regionEndPos = nil
 
