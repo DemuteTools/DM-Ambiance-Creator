@@ -447,6 +447,13 @@ function M.buildGenParams(params, containerInfo)
     genParams.randomizeVolume = container.randomizeVolume and params.preserveVolume
     genParams.randomizePan = container.randomizePan and params.preservePan
 
+    -- When preserve is FALSE, also flatten the base values to neutral defaults
+    -- This prevents baked-in randomization from imported items from leaking through
+    -- (e.g., items imported from timeline may have non-neutral originalVolume/Pitch/Pan)
+    genParams.flattenPitch = not params.preservePitch
+    genParams.flattenVolume = not params.preserveVolume
+    genParams.flattenPan = not params.preservePan
+
     return genParams
 end
 

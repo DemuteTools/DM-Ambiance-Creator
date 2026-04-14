@@ -1,6 +1,6 @@
 --[[
 @description DM_Ambiance Creator
-@version 0.17.9-beta
+@version 0.17.10-beta
 @about
     The Ambiance Creator is a tool that makes it easy to create soundscapes by randomly placing audio elements on the REAPER timeline according to user parameters.
 @author Anthony Deneyer
@@ -159,7 +159,7 @@ end
 
 -- Global state shared across modules and UI
 local globals = {
-    version = "0.17.9-beta",          -- Script version (sync with @version header)
+    version = "0.17.10-beta",         -- Script version (sync with @version header)
     items = {},                       -- Stores all items (folders and groups at top-level) - PATH-BASED SYSTEM
     timeSelectionValid = false,       -- Indicates if a valid time selection exists in the project
     startTime = 0,                    -- Start time of the current time selection
