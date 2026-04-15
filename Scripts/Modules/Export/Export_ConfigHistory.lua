@@ -61,12 +61,10 @@ local function deserializeHistory(str)
     if not str or str == "" then return {} end
     local fn, err = load("return " .. str, "config", "t", {})
     if not fn then
-        reaper.ShowConsoleMsg("[Export ConfigHistory] Deserialize error: " .. tostring(err) .. "\n")
         return {}
     end
     local ok, result = pcall(fn)
     if not ok or type(result) ~= "table" then
-        reaper.ShowConsoleMsg("[Export ConfigHistory] Invalid history data\n")
         return {}
     end
     return result
@@ -89,8 +87,10 @@ local function deepCompare(a, b)
 end
 
 -- Helper: Persist configHistory to REAPER ExtState
+-- ExtState is stored in INI file — newlines would corrupt the format, so we compact to single-line
 local function persistToExtState()
     local serialized = serializeTable(configHistory, nil, 0)
+    serialized = serialized:gsub("\n%s*", " ")
     reaper.SetExtState(EXTSTATE_SECTION, EXTSTATE_KEY, serialized, true)
 end
 
