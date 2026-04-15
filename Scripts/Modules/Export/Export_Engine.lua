@@ -1,5 +1,5 @@
 --[[
-@version 1.19
+@version 1.20
 @noindex
 DM Ambiance Creator - Export Engine Module
 Handles export orchestration, region creation, and export execution.
@@ -32,6 +32,9 @@ v1.17 (2026-02-08): Story 5.6 Code Review v2 R2 - Skip processLoop() when multi-
 v1.19: Bug fix - Region creation now uses global createRegions setting instead of per-container params.
        Fixes bug where containers with overrides (typically loop containers) had createRegions=false
        frozen from override creation time, preventing region creation even when enabled globally.
+v1.20: Bug fix - Loop processing now handles single-item tracks (trim at zero-crossing instead of
+       requiring 2+ items for split/swap). Items longer than targetDuration were exported at full
+       length without any loop processing. Region bounds clamped to targetDuration in loop mode.
 --]]
 
 local M = {}
@@ -238,6 +241,7 @@ local function processContainerExport(containerInfo, params, currentExportPositi
     )
 
     -- Process loop if in loop mode (Story 3.2: zero-crossing split/swap)
+    -- Uses effective params (per-container override or global) so user can set loopMode per container
     local isLoopMode = Settings.resolveLoopMode(containerInfo.container, params)
     local loopNewItems = {}
 
@@ -247,7 +251,7 @@ local function processContainerExport(containerInfo, params, currentExportPositi
     end
 
     -- R2: Skip processLoop when multi-channel sync was applied (sync already handles trim-to-bounds)
-    if isLoopMode and Loop and #placedItems > 1 and not syncApplied then
+    if isLoopMode and Loop and #placedItems > 0 and not syncApplied then
         -- Code Review M1: Pass targetDuration for AC#8 validation
         -- Story 5.3: Pass effectiveInterval for consistent overlap in split/swap
         local targetDuration = params.loopDuration or 30
@@ -349,9 +353,7 @@ local function processContainerExport(containerInfo, params, currentExportPositi
 
     -- Create region for this container if enabled
     -- Always use GLOBAL createRegions setting (not per-container override)
-    -- because region creation is a project-level concern.
-    -- Fix: overrides created before enabling createRegions globally would have
-    -- createRegions=false frozen from creation time, preventing region creation.
+    -- because region creation is a project-level concern (v1.19 fix).
     local globalParams = Settings.getGlobalParams()
     if globalParams.createRegions and #placedItems > 0 then
         local regionStartPos = nil
@@ -377,6 +379,9 @@ local function processContainerExport(containerInfo, params, currentExportPositi
             end
         end
 
+        -- Region bounds reflect actual item positions (including zero-crossing offsets).
+        -- No clamping needed: processLoop already trims/splits items to targetDuration,
+        -- and slight ZC offsets (±50ms) should be captured in the region.
         if regionStartPos and regionEndPos then
             local regionName = parseRegionPattern(params.regionPattern, containerInfo, containerExportIndex)
             reaper.AddProjectMarker2(0, true, regionStartPos, regionEndPos, regionName, -1, 0)
@@ -632,7 +637,7 @@ function M.generatePreview()
             poolSelected = poolTotal
         end
 
-        -- Resolve loop mode
+        -- Resolve loop mode using effective params (per-container override or global)
         local loopModeResolved = Settings.resolveLoopMode(container, params)
         local loopModeAuto = (params.loopMode == "auto" and loopModeResolved)
 

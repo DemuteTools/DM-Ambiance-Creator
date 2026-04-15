@@ -1,5 +1,5 @@
 --[[
-@version 1.20
+@version 1.21
 @noindex
 DM Ambiance Creator - Export Placement Module
 Handles track resolution, item placement helpers, and export track management.
@@ -87,6 +87,9 @@ v1.20: Bug fix - resolvePool() now reads item.areas (source of truth) first, fal
        globals.waveformAreas (UI cache). Previously only checked globals.waveformAreas which is
        ephemeral and only populated when the user views the waveform in the UI, causing export
        to ignore areas and use the full item instead.
+v1.21: Reverted v1.21-draft global params override for loop settings. Loop mode settings
+       (loopMode, loopDuration, loopInterval) correctly use effective params (per-container
+       override or global) so users can set loopMode per container via overrides.
 --]]
 
 local M = {}
@@ -1112,6 +1115,7 @@ function M.placeContainerItems(pool, targetTracks, trackStructure, params, conta
     effectiveIntervalMode = effectiveIntervalMode or Constants.TRIGGER_MODES.ABSOLUTE
 
     -- Resolve loop mode and effective interval
+    -- Uses effective params (per-container override or global) so user can set loopMode per container
     local isLoopMode = Settings and Settings.resolveLoopMode(container, params) or false
     local effectiveInterval
     if isLoopMode then

@@ -1,5 +1,5 @@
 --[[
-@version 1.2
+@version 1.4
 @noindex
 DM Ambiance Creator - Export Loop Module
 Handles zero-crossing detection and seamless loop creation via split/swap processing.
@@ -9,6 +9,15 @@ v1.2 (2026-02-07): Story 5.3 - Added effectiveInterval parameter to processLoop(
       Maintains consistent overlap between moved right part and first item after split/swap.
       Fixes bug where overlap was ignored, causing adjacent placement (0s gap) instead of configured overlap.
       Handles edge case where right part is shorter than target overlap with warning.
+v1.3: Bug fix - processLoop() now handles single-item tracks with seamless loop split/swap.
+      Previously required 2+ items for split/swap, causing items longer than targetDuration to be exported
+      at full length without any loop processing. Now: trims item to targetDuration + crossfade overlap,
+      splits at zero-crossing near targetEnd, wraps tail before the start with overlap for crossfade.
+      Same seamless loop technique as multi-item but adapted for a single source item.
+v1.4: Bug fix - splitAndSwap edge case placed tail adjacent instead of overlapping.
+      When rightPartLen < overlapTarget (common due to zero-crossing offset), the tail was placed
+      at firstItemPos - rightPartLen (= adjacent, 0 overlap) instead of firstItemPos (= full overlap).
+      This caused single-item loops to have no crossfade despite correct split/swap.
 --]]
 
 local M = {}
@@ -193,9 +202,11 @@ function M.splitAndSwap(lastItem, firstItem, splitPoint, effectiveInterval)
     local warning = nil
 
     -- Edge case: right part shorter than overlap amount (AC #6)
+    -- Cap overlap at rightPartLen — place tail at firstItemPos so it fully overlaps
+    -- with the beginning of firstItem (maximum possible overlap = rightPartLen).
+    -- Previous bug: placed at firstItemPos - rightPartLen (= adjacent, zero overlap).
     if effectiveInterval and effectiveInterval < 0 and rightPartLen < overlapTarget then
-        -- Maximum possible overlap is limited by right part length
-        newPosition = firstItemPos - rightPartLen
+        newPosition = firstItemPos
         warning = string.format(
             "Loop overlap reduced to %.2fs (target: %.2fs) due to short split",
             rightPartLen, overlapTarget
@@ -265,9 +276,7 @@ function M.processLoop(placedItems, targetTracks, targetDuration, effectiveInter
 
     -- Process each track independently
     for trackIdx, trackItems in pairs(itemsByTrack) do
-        -- Check if track has at least 2 items (AC #4)
-        if #trackItems < 2 then
-            table.insert(result.warnings, "Track " .. trackIdx .. ": Need at least 2 items for meaningful loop (found " .. #trackItems .. ")")
+        if #trackItems == 0 then
             goto nextTrack
         end
 
@@ -280,8 +289,118 @@ function M.processLoop(placedItems, targetTracks, targetDuration, effectiveInter
         local firstPlaced = trackItems[1]
         local lastPlaced = trackItems[#trackItems]
 
-        -- Code Review M1: AC#8 explicit validation
-        -- Split/swap only applied to tracks where last item reaches/exceeds targetDuration
+        -- Verify items are valid
+        if not reaper.ValidatePtr(firstPlaced.item, "MediaItem*") then
+            table.insert(result.errors, "Track " .. trackIdx .. ": First item is invalid")
+            result.success = false
+            goto nextTrack
+        end
+        if #trackItems > 1 and not reaper.ValidatePtr(lastPlaced.item, "MediaItem*") then
+            table.insert(result.errors, "Track " .. trackIdx .. ": Last item is invalid")
+            result.success = false
+            goto nextTrack
+        end
+
+        -- Single-item track: seamless loop via split/swap (same technique as multi-item)
+        -- The item is longer than targetDuration. We:
+        -- 1. Trim to targetDuration + crossfade overlap
+        -- 2. Split at zero-crossing near targetDuration
+        -- 3. Move the right part (tail) before the left part with overlap
+        -- 4. Export_Engine applies crossfade on the overlap → seamless loop
+        if #trackItems == 1 then
+            if not targetDuration then
+                table.insert(result.warnings, "Track " .. trackIdx .. ": Single item, no targetDuration set, skipping")
+                goto nextTrack
+            end
+
+            local itemPos = reaper.GetMediaItemInfo_Value(firstPlaced.item, "D_POSITION")
+            local itemLen = reaper.GetMediaItemInfo_Value(firstPlaced.item, "D_LENGTH")
+            local itemEnd = itemPos + itemLen
+            local targetEnd = itemPos + targetDuration
+
+            if itemEnd <= targetEnd + 0.001 then
+                -- Item is shorter than or equal to targetDuration, nothing to do
+                goto nextTrack
+            end
+
+            -- Determine crossfade overlap for seamless loop
+            -- Use effectiveInterval if negative (user configured overlap), otherwise default 2s
+            local Constants = globals.Constants
+            local defaultCrossfade = Constants and Constants.EXPORT
+                and Constants.EXPORT.LOOP_CROSSFADE_DEFAULT or 2.0
+            local crossfadeDuration = (effectiveInterval and effectiveInterval < 0)
+                and math.abs(effectiveInterval)
+                or defaultCrossfade
+
+            -- Clamp crossfade to available audio beyond targetEnd
+            local availableExtra = itemEnd - targetEnd
+            if crossfadeDuration > availableExtra then
+                crossfadeDuration = availableExtra
+            end
+            -- Need at least some overlap for a meaningful crossfade
+            if crossfadeDuration < 0.1 then
+                table.insert(result.warnings, string.format(
+                    "Track %d: Not enough audio beyond target (%.2fs extra) for seamless loop crossfade",
+                    trackIdx, availableExtra
+                ))
+                goto nextTrack
+            end
+
+            -- Step 1: Trim item to targetDuration + crossfade at zero-crossing
+            local trimTarget = targetEnd + crossfadeDuration
+            local trimZC, trimZCFound = M.findNearestZeroCrossing(firstPlaced.item, trimTarget)
+            local excessPart = reaper.SplitMediaItem(firstPlaced.item, trimZC)
+            if excessPart then
+                local track = reaper.GetMediaItemTrack(excessPart)
+                if track then
+                    reaper.DeleteTrackMediaItem(track, excessPart)
+                end
+            end
+
+            -- Step 2: Find zero-crossing near targetEnd for the loop split point
+            local splitZC, splitZCFound = M.findNearestZeroCrossing(firstPlaced.item, targetEnd)
+            if not splitZCFound then
+                table.insert(result.warnings, "Track " .. trackIdx .. ": Using target point for loop split (no zero-crossing found)")
+            end
+
+            -- Step 3: Split/swap at zero-crossing
+            -- splitAndSwap splits the item and moves right part before the left part
+            -- Force overlap so the tail crossfades with the beginning
+            local loopInterval = -(crossfadeDuration)
+            local swapResult = M.splitAndSwap(firstPlaced.item, firstPlaced.item, splitZC, loopInterval)
+
+            if swapResult.success and swapResult.rightPart then
+                local rightPartLen = reaper.GetMediaItemInfo_Value(swapResult.rightPart, "D_LENGTH")
+                table.insert(result.newItems, {
+                    item = swapResult.rightPart,
+                    position = swapResult.rightPartPos,
+                    length = rightPartLen,
+                    trackIdx = trackIdx
+                })
+                firstPlaced.length = reaper.GetMediaItemInfo_Value(firstPlaced.item, "D_LENGTH")
+                table.insert(result.warnings, string.format(
+                    "Track %d: Single item loop - split/swap at %.2fs with %.2fs crossfade",
+                    trackIdx, targetDuration, rightPartLen
+                ))
+            else
+                -- splitAndSwap failed, fallback to simple trim
+                reaper.SetMediaItemInfo_Value(firstPlaced.item, "D_LENGTH", targetDuration)
+                firstPlaced.length = targetDuration
+                table.insert(result.warnings, string.format(
+                    "Track %d: Single item trimmed to %.2fs (split/swap failed: %s)",
+                    trackIdx, targetDuration, swapResult.warning or "unknown"
+                ))
+            end
+
+            if swapResult and swapResult.warning then
+                table.insert(result.warnings, "Track " .. trackIdx .. ": " .. swapResult.warning)
+            end
+
+            goto nextTrack
+        end
+
+        -- Multi-item track: standard split/swap logic
+        -- AC#8 validation: Split/swap only applied to tracks where last item reaches/exceeds targetDuration
         if targetDuration then
             local lastItemEnd = lastPlaced.position + lastPlaced.length
             local firstItemStart = firstPlaced.position
@@ -294,18 +413,6 @@ function M.processLoop(placedItems, targetTracks, targetDuration, effectiveInter
                 ))
                 goto nextTrack
             end
-        end
-
-        -- Verify items are valid
-        if not reaper.ValidatePtr(firstPlaced.item, "MediaItem*") then
-            table.insert(result.errors, "Track " .. trackIdx .. ": First item is invalid")
-            result.success = false
-            goto nextTrack
-        end
-        if not reaper.ValidatePtr(lastPlaced.item, "MediaItem*") then
-            table.insert(result.errors, "Track " .. trackIdx .. ": Last item is invalid")
-            result.success = false
-            goto nextTrack
         end
 
         -- Calculate center of last item (AC #1)

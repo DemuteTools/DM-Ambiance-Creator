@@ -529,6 +529,7 @@ Constants.EXPORT = {
     LOOP_INTERVAL_MAX = 10,             -- Maximum interval (positive = gap)
     LOOP_INTERVAL_DEFAULT = 0,          -- Default interval (seconds)
     LOOP_MAX_ITERATIONS = 10000,        -- Safety limit for loop mode placement iterations
+    LOOP_CROSSFADE_DEFAULT = 2.0,       -- Default crossfade duration (seconds) for single-item seamless loops
     -- Multichannel Export Mode (Story 5.2)
     MULTICHANNEL_EXPORT_MODE_FLATTEN = "flatten",   -- All items on first child track
     MULTICHANNEL_EXPORT_MODE_PRESERVE = "preserve",  -- Distribute items across child tracks
